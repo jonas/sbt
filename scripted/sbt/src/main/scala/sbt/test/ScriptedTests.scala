@@ -7,6 +7,7 @@ package test
 
 import java.io.File
 import java.nio.charset.Charset
+import java.util.Properties
 
 import xsbt.IPC
 import xsbt.test.{ CommentHandler, FileCommands, ScriptRunner, TestScriptParser }
@@ -122,14 +123,14 @@ class ScriptedRunner {
   @deprecated("No longer used", "0.13.9")
   def run(resourceBaseDirectory: File, bufferLog: Boolean, tests: Array[String], bootProperties: File,
     launchOpts: Array[String]): Unit =
-    run(resourceBaseDirectory, bufferLog, tests, ConsoleLogger(), bootProperties, launchOpts, emptyCallback) //new FullLogger(Logger.xlog2Log(log)))
+    run(resourceBaseDirectory, bufferLog, tests, ConsoleLogger(), bootProperties, launchOpts, emptyCallback)
 
   // This is called by project/Scripted.scala
   // Using java.util.List[File] to encode File => Unit
   def run(resourceBaseDirectory: File, bufferLog: Boolean, tests: Array[String], bootProperties: File,
     launchOpts: Array[String], prescripted: java.util.List[File]): Unit =
     run(resourceBaseDirectory, bufferLog, tests, ConsoleLogger(), bootProperties, launchOpts,
-      { f: File => prescripted.add(f); () }) //new FullLogger(Logger.xlog2Log(log)))
+      { f: File => prescripted.add(f); () })
 
   @deprecated("No longer used", "0.13.9")
   def run(resourceBaseDirectory: File, bufferLog: Boolean, tests: Array[String], bootProperties: File,
@@ -144,26 +145,53 @@ class ScriptedRunner {
   def run(resourceBaseDirectory: File, bufferLog: Boolean, tests: Array[String], logger: AbstractLogger, bootProperties: File,
     launchOpts: Array[String], prescripted: File => Unit) {
     val runner = new ScriptedTests(resourceBaseDirectory, bufferLog, bootProperties, launchOpts)
-    val allTests = get(tests, resourceBaseDirectory, logger) flatMap {
+    val sbtVersion = bootProperties.getName.dropWhile(!_.isDigit).dropRight(".jar".length)
+    val accept = isTestCompatible(resourceBaseDirectory, sbtVersion) _
+    val allTests = get(tests, resourceBaseDirectory, accept, logger) flatMap {
       case ScriptedTest(group, name) =>
         runner.scriptedTest(group, name, prescripted, logger)
     }
     runAll(allTests)
   }
+
   def runAll(tests: Seq[() => Option[String]]): Unit = {
     val errors = for (test <- tests; err <- test()) yield err
     if (errors.nonEmpty)
       sys.error(errors.mkString("Failed tests:\n\t", "\n\t", "\n"))
   }
+
+  @deprecated("No longer used", "0.13.16")
   def get(tests: Seq[String], baseDirectory: File, log: Logger): Seq[ScriptedTest] =
-    if (tests.isEmpty) listTests(baseDirectory, log) else parseTests(tests)
+    get(tests, baseDirectory, _ => true, log)
+  def get(tests: Seq[String], baseDirectory: File, accept: ScriptedTest => Boolean, log: Logger): Seq[ScriptedTest] =
+    if (tests.isEmpty) listTests(baseDirectory, accept, log) else parseTests(tests)
+
+  @deprecated("No longer used", "0.13.16")
   def listTests(baseDirectory: File, log: Logger): Seq[ScriptedTest] =
-    (new ListTests(baseDirectory, _ => true, log)).listTests
+    listTests(baseDirectory, _ => true, log)
+  def listTests(baseDirectory: File, accept: ScriptedTest => Boolean, log: Logger): Seq[ScriptedTest] =
+    (new ListTests(baseDirectory, accept, log)).listTests
+
   def parseTests(in: Seq[String]): Seq[ScriptedTest] =
     for (testString <- in) yield {
       val Array(group, name) = testString.split("/").map(_.trim)
       ScriptedTest(group, name)
     }
+
+  private def isTestCompatible(resourceBaseDirectory: File, sbtVersion: String)(test: ScriptedTest): Boolean = {
+    import sbt.cross.CrossVersionUtil.binarySbtVersion
+    val buildProperties = new Properties()
+    val testDir = new File(new File(resourceBaseDirectory, test.group), test.name)
+    val buildPropertiesFile = new File(new File(testDir, "project"), "build.properties")
+
+    IO.load(buildProperties, buildPropertiesFile)
+
+    Option(buildProperties.getProperty("sbt.version")) match {
+      case Some(version) => binarySbtVersion(version) == binarySbtVersion(sbtVersion)
+      case None          => true
+    }
+  }
+
 }
 
 final case class ScriptedTest(group: String, name: String) extends NotNull {

@@ -421,7 +421,7 @@ lazy val scriptedBaseProj = (project in scriptedPath / "base").
   )
 
 lazy val scriptedSbtProj = (project in scriptedPath / "sbt").
-  dependsOn (ioProj, logProj, processProj, scriptedBaseProj, interfaceProj).
+  dependsOn (ioProj, crossProj, logProj, processProj, scriptedBaseProj, interfaceProj).
   settings(
     baseSettings,
     name := "Scripted sbt",
